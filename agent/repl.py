@@ -10,6 +10,7 @@ from .ui import (
 	clear_screen,
 	get_theme,
 	load_ui_config,
+	render_app_banner,
 	render_markdown,
 	run_onboarding,
 	save_ui_config,
@@ -47,6 +48,8 @@ def run_repl(*, agent_config: AgentConfig | None = None, history_path: str | Non
 	ui_cfg = load_ui_config(cfg.ui_config_path)
 	theme = get_theme(ui_cfg.get("theme"))
 
+	print(render_app_banner(theme))
+	print("")
 	print(theme.a("Tiny Agent REPL") + theme.d(". Type /help for commands."))
 
 	while True:

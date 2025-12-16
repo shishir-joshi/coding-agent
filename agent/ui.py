@@ -143,6 +143,31 @@ THEMES: list[Theme] = [
 ]
 
 
+def render_app_banner(theme: Theme) -> str:
+	"""Large ASCII banner, inspired by modern CLI onboarding.
+
+	Keep it distinct (no trademarked text art), but similar *vibe*:
+	big block letters + accent color.
+	"""
+	lines = [
+		"████████╗██╗███╗   ██╗██╗   ██╗",
+		"╚══██╔══╝██║████╗  ██║╚██╗ ██╔╝",
+		"   ██║   ██║██╔██╗ ██║ ╚████╔╝ ",
+		"   ██║   ██║██║╚██╗██║  ╚██╔╝  ",
+		"   ██║   ██║██║ ╚████║   ██║   ",
+		"   ╚═╝   ╚═╝╚═╝  ╚═══╝   ╚═╝   ",
+		"",
+		" █████╗  ██████╗ ███████╗███╗   ██╗████████╗",
+		"██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝",
+		"███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ",
+		"██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ",
+		"██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ",
+		"╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
+	]
+	# Accent the banner; dim the empty line spacing.
+	return "\n".join(theme.a(l) if l else l for l in lines)
+
+
 def get_theme(theme_id: str | None) -> Theme:
 	if theme_id:
 		for t in THEMES:
@@ -336,7 +361,15 @@ def render_markdown(text: str, theme: Theme) -> str:
 
 
 def render_theme_screen(*, theme: Theme, selected_index: int) -> str:
-	header = _box([theme.a("* Welcome to Tiny Agent"), theme.d("Choose the text style that looks best with your terminal."), theme.d("To change this later, run /theme")], theme=theme)
+	banner = render_app_banner(theme)
+	header = _box(
+		[
+			theme.a("* Welcome to Tiny Agent"),
+			theme.d("Choose the text style that looks best with your terminal."),
+			theme.d("To change this later, run /theme"),
+		],
+		theme=theme,
+	)
 
 	items: list[str] = []
 	for i, t in enumerate(THEMES, start=1):
@@ -348,7 +381,15 @@ def render_theme_screen(*, theme: Theme, selected_index: int) -> str:
 		items.append(f"{prefix}{i}. {t.name} {mark}".rstrip())
 
 	preview = render_preview(theme)
-	return "\n\n".join([header, "\n".join(items), preview, theme.d("Enter a number to change theme, or press Enter to continue")])
+	return "\n\n".join(
+		[
+			banner,
+			header,
+			"\n".join(items),
+			preview,
+			theme.d("Enter a number to change theme, or press Enter to continue"),
+		]
+	)
 
 
 def render_preview(theme: Theme) -> str:
