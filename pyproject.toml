@@ -1,0 +1,8 @@
+[project]
+name = "tiny-tool-agent"
+version = "0.1.0"
+description = "A tiny learning LLM agent with tool execution"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 110
