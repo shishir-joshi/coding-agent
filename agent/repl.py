@@ -1,15 +1,26 @@
 from __future__ import annotations
 
 import shlex
+import os
 from dataclasses import dataclass
 
 from .agent_loop import Agent, AgentConfig
 from .history import HistoryStore
+from .ui import (
+	clear_screen,
+	get_theme,
+	load_ui_config,
+	render_markdown,
+	run_onboarding,
+	save_ui_config,
+	supports_color,
+)
 
 
 @dataclass
 class ReplConfig:
 	history_path: str = ".agent/history.jsonl"
+	ui_config_path: str = ".agent/ui.json"
 
 
 HELP_TEXT = """Commands:
@@ -17,6 +28,8 @@ HELP_TEXT = """Commands:
   /context              Print current LLM context (all messages)
 	/tools [json]         Show available tools (add 'json' to show full schemas)
   /history [n]          Print last n history events (default 10)
+	/theme                Re-run theme selection
+	/clear                Clear the screen
   /reset                Reset in-memory context
   /exit                 Quit
 
@@ -29,11 +42,17 @@ def run_repl(*, agent_config: AgentConfig | None = None, history_path: str | Non
 	history = HistoryStore(cfg.history_path)
 	agent = Agent(history=history, config=agent_config)
 
-	print("Tiny Agent REPL. Type /help for commands.")
+	# UI/theme
+	theme = run_onboarding(ui_config_path=cfg.ui_config_path)
+	ui_cfg = load_ui_config(cfg.ui_config_path)
+	theme = get_theme(ui_cfg.get("theme"))
+
+	print(theme.a("Tiny Agent REPL") + theme.d(". Type /help for commands."))
 
 	while True:
 		try:
-			raw = input("> ").rstrip("\n")
+			prompt = theme.a("> ") if supports_color() else "> "
+			raw = input(prompt).rstrip("\n")
 		except (EOFError, KeyboardInterrupt):
 			print("\nbye")
 			return
@@ -42,15 +61,16 @@ def run_repl(*, agent_config: AgentConfig | None = None, history_path: str | Non
 			continue
 
 		if raw.startswith("/"):
-			if _handle_command(raw, agent, history):
+			if _handle_command(raw, agent, history, cfg):
 				return
 			continue
 
+		print(theme.d("* Simmering..."))
 		answer = agent.chat(raw)
-		print(answer)
+		print(render_markdown(answer, theme))
 
 
-def _handle_command(raw: str, agent: Agent, history: HistoryStore) -> bool:
+def _handle_command(raw: str, agent: Agent, history: HistoryStore, cfg: ReplConfig) -> bool:
 	parts = shlex.split(raw)
 	cmd = parts[0]
 
@@ -79,6 +99,17 @@ def _handle_command(raw: str, agent: Agent, history: HistoryStore) -> bool:
 				print("usage: /history [n]")
 				return False
 		print(history.tail(n))
+		return False
+	if cmd == "/clear":
+		clear_screen()
+		return False
+	if cmd == "/theme":
+		# Allow changing theme even if onboarding is disabled.
+		os.environ.pop("AGENT_NO_ONBOARDING", None)
+		new_theme = run_onboarding(ui_config_path=cfg.ui_config_path)
+		ui_cfg = load_ui_config(cfg.ui_config_path)
+		ui_cfg["theme"] = new_theme.id
+		save_ui_config(cfg.ui_config_path, ui_cfg)
 		return False
 
 	print("unknown command; try /help")

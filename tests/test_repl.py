@@ -34,14 +34,15 @@ class TestRepl(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as td:
 			history = repl.HistoryStore(os.path.join(td, "h.jsonl"))
 			agent = FakeAgent()
+			cfg = repl.ReplConfig(history_path=os.path.join(td, "h.jsonl"))
 
 			buf = io.StringIO()
 			with redirect_stdout(buf):
-				repl._handle_command("/context", agent, history)
-				repl._handle_command("/tools", agent, history)
-				repl._handle_command("/tools json", agent, history)
-				repl._handle_command("/reset", agent, history)
-				repl._handle_command("/history 5", agent, history)
+				repl._handle_command("/context", agent, history, cfg)
+				repl._handle_command("/tools", agent, history, cfg)
+				repl._handle_command("/tools json", agent, history, cfg)
+				repl._handle_command("/reset", agent, history, cfg)
+				repl._handle_command("/history 5", agent, history, cfg)
 
 			out = buf.getvalue()
 			self.assertIn("CTX", out)
@@ -54,9 +55,9 @@ class TestRepl(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as td:
 			history_path = os.path.join(td, "hist.jsonl")
 			buf = io.StringIO()
-			with patch.object(repl, "Agent", FakeAgent), patch(
-				"builtins.input", side_effect=["hello", "/exit"]
-			), redirect_stdout(buf):
+			with patch.dict(os.environ, {"AGENT_NO_ONBOARDING": "1"}), patch.object(
+				repl, "Agent", FakeAgent
+			), patch("builtins.input", side_effect=["hello", "/exit"]), redirect_stdout(buf):
 				repl.run_repl(agent_config=AgentConfig(debug=False), history_path=history_path)
 
 			out = buf.getvalue()
