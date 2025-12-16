@@ -18,6 +18,10 @@ Rules:
 - After using tools, explain what you did briefly.
 
 You have access to tools defined in the tool schema. Use them when helpful.
+
+Terminal notes:
+- `execute_command` runs in a persistent shell session, so state like `cd` and `export` persists.
+- For long-running tasks, use `execute_command` with `is_background=true` then poll with `get_process_output`.
 """
 
 

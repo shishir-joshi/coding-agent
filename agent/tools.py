@@ -7,10 +7,18 @@ from typing import Any
 
 from .patches import apply_v4a_patch
 from .diffs import unified_diff
+from .terminal import TerminalManager
 
 
 @dataclass
 class ToolRegistry:
+	terminal: TerminalManager | None = None
+
+	def _terminal(self) -> TerminalManager:
+		if self.terminal is None:
+			self.terminal = TerminalManager(workdir=".", state_dir=".agent")
+		return self.terminal
+
 	def tool_schemas(self) -> list[dict[str, Any]]:
 		# OpenAI function-tool schema
 		return [
@@ -100,6 +108,46 @@ class ToolRegistry:
 					},
 				},
 			},
+			{
+				"type": "function",
+				"function": {
+					"name": "execute_command",
+					"description": "Run a shell command in a persistent terminal session (stateful). Can run in background.",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"command": {"type": "string"},
+							"cwd": {"type": "string", "description": "If provided, cd to this directory (persists for later commands)."},
+							"timeout_s": {"type": "integer", "default": 120, "minimum": 1},
+							"is_background": {"type": "boolean", "default": False},
+						},
+						"required": ["command"],
+					},
+				},
+			},
+			{
+				"type": "function",
+				"function": {
+					"name": "get_process_output",
+					"description": "Get output (and exit code if finished) for a background process started by execute_command.",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"process_id": {"type": "string"},
+							"tail_lines": {"type": "integer", "default": 200, "minimum": 1},
+						},
+						"required": ["process_id"],
+					},
+				},
+			},
+			{
+				"type": "function",
+				"function": {
+					"name": "list_processes",
+					"description": "List background processes started in this workspace (best-effort).",
+					"parameters": {"type": "object", "properties": {}},
+				},
+			},
 		]
 
 	def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -116,6 +164,12 @@ class ToolRegistry:
 				return self._apply_patch(args)
 			if name == "create_diff":
 				return self._create_diff(args)
+			if name == "execute_command":
+				return self._execute_command(args)
+			if name == "get_process_output":
+				return self._get_process_output(args)
+			if name == "list_processes":
+				return self._list_processes(args)
 			return {"ok": False, "error": f"Unknown tool: {name}"}
 		except Exception as e:
 			return {"ok": False, "error": str(e)}
@@ -191,3 +245,34 @@ class ToolRegistry:
 			old = ""
 		d = unified_diff(path, old, new_content)
 		return {"ok": True, "path": path, "diff": d}
+
+	def _execute_command(self, args: dict[str, Any]) -> dict[str, Any]:
+		command = args["command"]
+		cwd = args.get("cwd")
+		timeout_s = int(args.get("timeout_s", 120) or 120)
+		is_background = bool(args.get("is_background", False))
+
+		term = self._terminal()
+		if is_background:
+			proc = term.start_background(command, cwd=cwd)
+			return {
+				"ok": True,
+				"background": True,
+				"process_id": proc.process_id,
+				"pid": proc.pid,
+				"log_path": proc.log_path,
+				"status_path": proc.status_path,
+			}
+
+		res = term.execute(command, cwd=cwd, timeout_s=timeout_s)
+		return {"ok": True, "background": False, **res}
+
+	def _get_process_output(self, args: dict[str, Any]) -> dict[str, Any]:
+		process_id = args["process_id"]
+		tail_lines = args.get("tail_lines", 200)
+		term = self._terminal()
+		return term.get_process_output(process_id, tail_lines=int(tail_lines) if tail_lines is not None else None)
+
+	def _list_processes(self, _args: dict[str, Any]) -> dict[str, Any]:
+		term = self._terminal()
+		return term.list_processes()
