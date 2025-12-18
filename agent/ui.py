@@ -168,6 +168,15 @@ def render_app_banner(theme: Theme) -> str:
 	return "\n".join(theme.a(l) if l else l for l in lines)
 
 
+def render_system_info(*, theme: Theme, model: str, cwd: str) -> str:
+	lines = [
+		theme.d("System info"),
+		theme.t(f"Model: {model}"),
+		theme.t(f"CWD:   {cwd}"),
+	]
+	return _box(lines, theme=theme)
+
+
 def get_theme(theme_id: str | None) -> Theme:
 	if theme_id:
 		for t in THEMES:
