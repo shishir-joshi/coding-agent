@@ -177,6 +177,37 @@ def render_system_info(*, theme: Theme, model: str, cwd: str) -> str:
 	return _box(lines, theme=theme)
 
 
+def render_plan_banner(plan: Any, theme: Theme) -> str:
+	"""Render active plan with minimal progress indicators.
+	
+	Shows:
+	- ✓ completed steps (dimmed)
+	- → current step (accented)
+	- · pending steps (dimmed)
+	"""
+	if not plan or not hasattr(plan, 'steps'):
+		return ""
+	
+	lines = [theme.a("Active Plan")]
+	
+	for idx, step in enumerate(plan.steps):
+		desc = step.description
+		if len(desc) > 60:
+			desc = desc[:57] + "..."
+		
+		if step.completed:
+			# Completed: ✓ (dim)
+			lines.append(theme.d(f"  ✓ {desc}"))
+		elif idx == plan.current_step_idx:
+			# Current: → (accent)
+			lines.append(theme.a(f"  → {desc}"))
+		else:
+			# Pending: · (dim)
+			lines.append(theme.d(f"  · {desc}"))
+	
+	return _box(lines, theme=theme)
+
+
 def get_theme(theme_id: str | None) -> Theme:
 	if theme_id:
 		for t in THEMES:

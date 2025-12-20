@@ -19,9 +19,19 @@ def main() -> None:
 		default=".agent/history.jsonl",
 		help="Where to append JSONL history events",
 	)
+	parser.add_argument(
+		"--no-plan",
+		action="store_true",
+		help="Disable automatic plan generation for complex tasks",
+	)
 	args = parser.parse_args()
 
-	agent_cfg = AgentConfig(model=args.model, max_tool_rounds=args.max_tool_rounds, debug=args.debug)
+	agent_cfg = AgentConfig(
+		model=args.model,
+		max_tool_rounds=args.max_tool_rounds,
+		debug=args.debug,
+		enable_planning=not args.no_plan,
+	)
 	run_repl(agent_config=agent_cfg, history_path=args.history_path)
 
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from .history import HistoryStore
 from .llm_openai_compat import OpenAICompatClient
 from .tools import ToolRegistry
-from .ui import get_theme, load_ui_config, render_markdown, supports_color
+from .ui import get_theme, load_ui_config, render_markdown, supports_color, render_plan_banner
 
 
 DEFAULT_SYSTEM_PROMPT = """You are a small, careful coding assistant running in a local CLI with tool access.
@@ -40,22 +40,78 @@ Response style:
 - Keep answers concise and actionable.
 """
 
+PLANNING_PROMPT = """Analyze this request and determine if it needs a multi-step plan:
+
+Request: {user_request}
+
+Respond with JSON only:
+{{
+  "needs_plan": true/false,
+  "reasoning": "why it does/doesn't need a plan",
+  "steps": ["step 1", "step 2", ...] (only if needs_plan is true)
+}}
+
+Needs a plan if:
+- Multiple files need changes
+- Requires exploration before acting
+- Has 3+ logical steps
+- Involves coordination across components
+
+Does NOT need a plan if:
+- Simple question/explanation
+- Single file edit
+- Quick lookup/search
+- 1-2 trivial steps
+"""
+
+
+@dataclass
+class PlanStep:
+	"""Represents a single step in an execution plan."""
+	description: str
+	completed: bool = False
+
+
+@dataclass
+class Plan:
+	"""Multi-step execution plan."""
+	steps: list[PlanStep] = field(default_factory=list)
+	current_step_idx: int = 0
+	approved: bool = False
+
+	def mark_current_complete(self) -> None:
+		"""Mark current step as completed and advance."""
+		if self.current_step_idx < len(self.steps):
+			self.steps[self.current_step_idx].completed = True
+			self.current_step_idx += 1
+
+	def is_complete(self) -> bool:
+		return self.current_step_idx >= len(self.steps)
+
+	def get_current_step(self) -> PlanStep | None:
+		if self.current_step_idx < len(self.steps):
+			return self.steps[self.current_step_idx]
+		return None
+
 
 @dataclass
 class AgentConfig:
 	model: str | None = None
 	max_tool_rounds: int = 8
 	debug: bool = False
+	enable_planning: bool = True
 
 
 class Agent:
-	def __init__(self, history: HistoryStore, config: AgentConfig | None = None) -> None:
+	def __init__(self, history: HistoryStore, config: AgentConfig | None = None, ui_callback: Callable[[str], None] | None = None) -> None:
 		self.history = history
 		self.config = config or AgentConfig()
 		self.tools = ToolRegistry()
 		self.client = OpenAICompatClient(model=self.config.model)
 		self._debug_theme = None
 		self._debug_round_idx = 0
+		self.current_plan: Plan | None = None
+		self.ui_callback = ui_callback  # For updating banner
 		self.reset()
 
 	def _debug_render_md(self, text: str) -> str:
@@ -119,6 +175,24 @@ class Agent:
 			{"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
 		]
 
+	def _heuristic_plan_steps(self, user_text: str) -> list[str]:
+		"""Lightweight keyword-based plan trigger for deterministic cases."""
+		text = user_text.lower()
+		if any(k in text for k in ["reorganize", "re-org", "reorg", "restructure", "re-structure", "layout", "structure"]):
+			return [
+				"Inspect the current repository structure and key config files",
+				"Identify natural boundaries (src/tests/docs/examples/scripts/config)",
+				"Propose a target layout with folders and naming",
+				"Outline migration steps and risks",
+			]
+		if any(k in text for k in ["plan", "roadmap", "steps", "timeline"]):
+			return [
+				"Clarify goals and constraints",
+				"Draft a multi-step execution plan",
+				"Execute steps and validate the result",
+			]
+		return []
+
 	def dump_context(self) -> str:
 		return json.dumps(self.messages, indent=2, ensure_ascii=False)
 
@@ -134,8 +208,76 @@ class Agent:
 			lines.append(f"- {name}: {desc}")
 		return "\n".join(lines)
 
-	def chat(self, user_text: str) -> str:
+	def _should_plan(self, user_text: str) -> tuple[bool, list[str], str]:
+		"""Determine if request needs a plan.
+		
+		Returns: (needs_plan, steps, reasoning)
+		"""
+		if not self.config.enable_planning:
+			return False, [], "planning disabled"
+
+		heuristic_steps = self._heuristic_plan_steps(user_text)
+		if heuristic_steps:
+			return True, heuristic_steps, "heuristic trigger"
+		
+		# Quick heuristics for obviously simple queries
+		if len(user_text.split()) < 10 and any(q in user_text.lower() for q in ["what", "how", "why", "show", "list", "?"]):
+			return False, [], "simple query"
+		
+		# Ask LLM to analyze
+		try:
+			prompt = PLANNING_PROMPT.format(user_request=user_text)
+			resp = self.client.chat(
+				messages=[{"role": "user", "content": prompt}],
+				tools=None,
+			)
+			content = resp["message"].get("content", "")
+			
+			# Extract JSON
+			if "{" in content and "}" in content:
+				json_str = content[content.find("{"):content.rfind("}") + 1]
+				data = json.loads(json_str)
+				needs_plan = data.get("needs_plan", False)
+				steps = data.get("steps", [])
+				reasoning = data.get("reasoning", "")
+				if needs_plan and not steps and heuristic_steps:
+					steps = heuristic_steps
+				return needs_plan, steps, reasoning or "llm analysis"
+		except Exception:
+			pass
+
+		if heuristic_steps:
+			return True, heuristic_steps, "heuristic fallback"
+
+		return False, [], "planning analysis failed"
+
+	def _generate_plan(self, user_text: str) -> Plan | None:
+		"""Generate a plan for the user's request."""
+		needs_plan, steps, reasoning = self._should_plan(user_text)
+		
+		if not needs_plan or not steps:
+			return None
+		
+		plan = Plan(
+			steps=[PlanStep(description=s) for s in steps],
+			approved=False,
+		)
+		return plan
+
+	def chat(self, user_text: str, *, auto_approve_plan: bool = False) -> str:
 		self.history.append_event({"type": "user", "text": user_text})
+		
+		# Check if we need a plan
+		if self.config.enable_planning and not self.current_plan:
+			plan = self._generate_plan(user_text)
+			if plan:
+				self.current_plan = plan
+				# Return plan for approval (caller will handle display)
+				if not auto_approve_plan:
+					return "__PLAN_APPROVAL_NEEDED__"
+				else:
+					self.current_plan.approved = True
+		
 		self.messages.append({"role": "user", "content": user_text})
 
 		for _round in range(self.config.max_tool_rounds):
@@ -159,6 +301,22 @@ class Agent:
 			if not tool_calls:
 				text = assistant_msg.get("content") or ""
 				self.history.append_event({"type": "assistant", "text": text})
+				
+				# Mark current plan step as complete
+				if self.current_plan and not self.current_plan.is_complete():
+					self.current_plan.mark_current_complete()
+					if self.ui_callback:
+						self.ui_callback("plan_updated")
+					if not self.current_plan.is_complete():
+						# Continue to next step
+						next_step = self.current_plan.get_current_step()
+						if next_step:
+							self.messages.append({"role": "user", "content": f"Continue with next step: {next_step.description}"})
+							continue
+					else:
+						# Plan complete
+						self.current_plan = None
+				
 				return text
 
 			# Execute tool calls and feed tool results back.

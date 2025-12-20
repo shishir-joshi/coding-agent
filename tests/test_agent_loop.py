@@ -20,8 +20,7 @@ class TestAgentLoop(unittest.TestCase):
 				f.write("hello\nworld\n")
 
 			hs = HistoryStore(os.path.join(td, "h.jsonl"))
-			agent = Agent(history=hs, config=AgentConfig(max_tool_rounds=4, debug=False))
-
+			agent = Agent(history=hs, config=AgentConfig(max_tool_rounds=4, debug=False, enable_planning=False))
 			calls = {"n": 0}
 
 			def fake_chat(*, messages, tools):

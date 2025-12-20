@@ -22,12 +22,12 @@ class OpenAICompatClient:
 		We keep this signature stable so the rest of the project (agent loop + tests)
 		doesn't need to care whether the backend is chat.completions or responses.
 		"""
-		api_key = os.environ.get("OPENAI_API_KEY")
+		api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("SHISHIR_OPENAI_API_KEY")
 		if not api_key:
 			raise RuntimeError("OPENAI_API_KEY is required")
 
 		base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-		model = self.model or os.environ.get("LLM_MODEL", "gpt-5.2")
+		model = self.model or os.environ.get("OPENAI_MODEL", "gpt-5.2")
 
 		url = f"{base_url}/responses"
 		payload: dict[str, Any] = {

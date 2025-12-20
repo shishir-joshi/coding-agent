@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .agent_loop import Agent, AgentConfig
+from .agent_loop import Agent, AgentConfig, Plan
 from .history import HistoryStore
 from .ui import (
 	clear_screen,
@@ -15,6 +15,7 @@ from .ui import (
 	load_ui_config,
 	render_app_banner,
 	render_markdown,
+	render_plan_banner,
 	render_system_info,
 	run_onboarding,
 	save_ui_config,
@@ -111,12 +112,22 @@ def run_repl(*, agent_config: AgentConfig | None = None, history_path: str | Non
 	cfg = ReplConfig(history_path=history_path or ReplConfig().history_path)
 	_setup_readline(history_path=cfg.repl_history_path)
 	history = HistoryStore(cfg.history_path)
-	agent = Agent(history=history, config=agent_config)
-
-	# UI/theme
+	
+	# UI/theme setup first (needed for callback)
 	theme = run_onboarding(ui_config_path=cfg.ui_config_path)
 	ui_cfg = load_ui_config(cfg.ui_config_path)
 	theme = get_theme(ui_cfg.get("theme"))
+	
+	# UI callback for plan updates
+	def update_plan_banner(event: str) -> None:
+		if event == "plan_updated" and agent.current_plan:
+			print()
+			print(render_plan_banner(agent.current_plan, theme))
+			print()
+	
+	agent = Agent(history=history, config=agent_config, ui_callback=update_plan_banner)
+
+	# Display banner
 	agent_cfg = getattr(agent, "config", None)
 	agent_model = getattr(agent_cfg, "model", None) if agent_cfg is not None else None
 	model = (agent_model or os.environ.get("LLM_MODEL") or "(default)").strip()
@@ -146,8 +157,33 @@ def run_repl(*, agent_config: AgentConfig | None = None, history_path: str | Non
 				return
 			continue
 
-		print(theme.d("* Simmering..."))
+		print(theme.d("* Analyzing..."))
 		answer = agent.chat(raw)
+		
+		# Handle plan approval
+		if answer == "__PLAN_APPROVAL_NEEDED__":
+			plan = agent.current_plan
+			if plan:
+				print()
+				print(render_plan_banner(plan, theme))
+				print()
+				try:
+					approval = input(theme.a("Approve plan? [Y/n] ")).strip().lower()
+					if approval in {"", "y", "yes"}:
+						plan.approved = True
+						print(theme.ok("✓ Plan approved"))
+						print()
+						# Continue with execution
+						answer = agent.chat(raw, auto_approve_plan=True)
+					else:
+						agent.current_plan = None
+						print(theme.err("✗ Plan rejected"))
+						continue
+				except (EOFError, KeyboardInterrupt):
+					agent.current_plan = None
+					print(theme.err("\n✗ Plan cancelled"))
+					continue
+		
 		# In debug mode, tool traces and the final rendered answer can visually run together.
 		# Add a clear separator before printing the final response.
 		agent_cfg = getattr(agent, "config", None)
