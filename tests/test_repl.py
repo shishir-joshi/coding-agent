@@ -30,6 +30,7 @@ class FakeAgent:
 
 
 class TestRepl(unittest.TestCase):
+	# Exercises common commands to ensure handlers route outputs correctly.
 	def test_handle_commands(self) -> None:
 		with tempfile.TemporaryDirectory() as td:
 			history = repl.HistoryStore(os.path.join(td, "h.jsonl"))
@@ -50,6 +51,7 @@ class TestRepl(unittest.TestCase):
 			self.assertIn("[{\"name\":\"t1\"}]", out)
 			self.assertIn("(context reset)", out)
 
+		# Smoke tests run_repl loop with patched Agent and input to avoid real I/O or network.
 	def test_run_repl_smoke(self) -> None:
 		# Avoid real network by patching Agent to FakeAgent
 		with tempfile.TemporaryDirectory() as td:
@@ -66,3 +68,17 @@ class TestRepl(unittest.TestCase):
 				print("\n--- repl transcript ---\n" + out)
 			self.assertIn("Tiny Agent REPL", out)
 			self.assertIn("ECHO:hello", out)
+
+	# Ensures unknown commands are reported and do not exit the loop.
+	def test_handle_unknown_command(self) -> None:
+		with tempfile.TemporaryDirectory() as td:
+			history = repl.HistoryStore(os.path.join(td, "h.jsonl"))
+			agent = FakeAgent()
+			cfg = repl.ReplConfig(history_path=os.path.join(td, "h.jsonl"))
+
+			buf = io.StringIO()
+			with redirect_stdout(buf):
+				result = repl._handle_command("/doesnotexist", agent, history, cfg)
+
+			self.assertFalse(result)
+			self.assertIn("unknown command", buf.getvalue())

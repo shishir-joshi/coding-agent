@@ -12,6 +12,7 @@ from agent.history import HistoryStore
 
 
 class TestAgentLoop(unittest.TestCase):
+	# Verifies a tool call is executed and the assistant consumes the tool output.
 	def test_tool_call_round_trip(self) -> None:
 		with tempfile.TemporaryDirectory() as td:
 			# Create a file the tool will read
@@ -50,6 +51,7 @@ class TestAgentLoop(unittest.TestCase):
 			# Ensure tool message was appended
 			self.assertTrue(any(m.get("role") == "tool" for m in agent.messages))
 
+	# Ensures debug mode surfaces the debug prefix in stdout.
 	def test_debug_mode_prints(self) -> None:
 		with tempfile.TemporaryDirectory() as td:
 			hs = HistoryStore(os.path.join(td, "h.jsonl"))
@@ -66,6 +68,7 @@ class TestAgentLoop(unittest.TestCase):
 			out = buf.getvalue()
 			self.assertIn("[debug]", out)
 
+		# Confirms the guard stops after max_tool_rounds and returns a safe message.
 	def test_max_rounds_guard(self) -> None:
 		with tempfile.TemporaryDirectory() as td:
 			hs = HistoryStore(os.path.join(td, "h.jsonl"))
@@ -91,3 +94,34 @@ class TestAgentLoop(unittest.TestCase):
 
 			out = agent.chat("loop")
 			self.assertIn("too many tool rounds", out)
+
+	# Checks heuristic keywords for repo reorg trigger a deterministic multi-step plan.
+	def test_should_plan_reorg_heuristic(self) -> None:
+		agent = Agent(history=HistoryStore(":memory:"), config=AgentConfig(enable_planning=True))
+		# If the LLM path ran, this would raise, so this ensures heuristics short-circuit.
+		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+
+		needs_plan, steps, reason = agent._should_plan("Please reorganize the repository layout")
+		self.assertTrue(needs_plan)
+		self.assertGreaterEqual(len(steps), 3)
+		self.assertIn("heuristic", reason)
+
+	# Checks planning keywords trigger deterministic steps even without LLM output.
+	def test_should_plan_plan_word_heuristic(self) -> None:
+		agent = Agent(history=HistoryStore(":memory:"), config=AgentConfig(enable_planning=True))
+		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+
+		needs_plan, steps, reason = agent._should_plan("Give me a roadmap with steps")
+		self.assertTrue(needs_plan)
+		self.assertGreaterEqual(len(steps), 3)
+		self.assertIn("heuristic", reason)
+
+	# Ensures short, simple questions are classified as no-plan paths.
+	def test_should_plan_simple_query_short_circuits(self) -> None:
+		agent = Agent(history=HistoryStore(":memory:"), config=AgentConfig(enable_planning=True))
+		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+
+		needs_plan, steps, reason = agent._should_plan("what is this?")
+		self.assertFalse(needs_plan)
+		self.assertEqual(steps, [])
+		self.assertIn("simple query", reason)
