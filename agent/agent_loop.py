@@ -40,6 +40,22 @@ Response style:
 - Keep answers concise and actionable.
 """
 
+FINALIZE_PROMPT = """You are finalizing the response after executing a multi-step plan.
+
+Given:
+- The original user request
+- The plan steps
+- The intermediate assistant outputs produced while executing each step
+
+Write a concise final response for the user that summarizes what was done and the outcome.
+
+Rules:
+- Be succinct and concrete (bullet points are OK).
+- Do not include internal tool logs or raw JSON.
+- If something failed or was skipped, say so.
+- If no meaningful work was done, say that.
+"""
+
 PLANNING_PROMPT = """Analyze this request and determine if it needs a multi-step plan:
 
 Request: {user_request}
@@ -111,8 +127,26 @@ class Agent:
 		self._debug_theme = None
 		self._debug_round_idx = 0
 		self.current_plan: Plan | None = None
+		self._plan_intermediate_outputs: list[dict[str, Any]] = []
 		self.ui_callback = ui_callback  # For updating banner
 		self.reset()
+
+	def _finalize_plan_response(self, *, original_request: str, plan: Plan, intermediate_outputs: list[dict[str, Any]]) -> str:
+		"""Ask the LLM to produce a final user-facing summary of the plan execution."""
+		steps = [s.description for s in plan.steps]
+		payload = {
+			"original_request": original_request,
+			"plan_steps": steps,
+			"intermediate_outputs": [o.get("text", "") for o in intermediate_outputs if o.get("text")],
+		}
+		resp = self.client.chat(
+			messages=[
+				{"role": "system", "content": FINALIZE_PROMPT},
+				{"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+			],
+			tools=None,
+		)
+		return (resp.get("message") or {}).get("content") or ""
 
 	def _debug_render_md(self, text: str) -> str:
 		"""Render markdown in debug logs when color is available."""
@@ -176,21 +210,10 @@ class Agent:
 		]
 
 	def _heuristic_plan_steps(self, user_text: str) -> list[str]:
-		"""Lightweight keyword-based plan trigger for deterministic cases."""
-		text = user_text.lower()
-		if any(k in text for k in ["reorganize", "re-org", "reorg", "restructure", "re-structure", "layout", "structure"]):
-			return [
-				"Inspect the current repository structure and key config files",
-				"Identify natural boundaries (src/tests/docs/examples/scripts/config)",
-				"Propose a target layout with folders and naming",
-				"Outline migration steps and risks",
-			]
-		if any(k in text for k in ["plan", "roadmap", "steps", "timeline"]):
-			return [
-				"Clarify goals and constraints",
-				"Draft a multi-step execution plan",
-				"Execute steps and validate the result",
-			]
+		"""Deprecated: previously returned hard-coded plan steps.
+
+		Planning is now LLM-driven; keep this method for API compatibility.
+		"""
 		return []
 
 	def dump_context(self) -> str:
@@ -216,10 +239,6 @@ class Agent:
 		if not self.config.enable_planning:
 			return False, [], "planning disabled"
 
-		heuristic_steps = self._heuristic_plan_steps(user_text)
-		if heuristic_steps:
-			return True, heuristic_steps, "heuristic trigger"
-		
 		# Quick heuristics for obviously simple queries
 		if len(user_text.split()) < 10 and any(q in user_text.lower() for q in ["what", "how", "why", "show", "list", "?"]):
 			return False, [], "simple query"
@@ -237,17 +256,14 @@ class Agent:
 			if "{" in content and "}" in content:
 				json_str = content[content.find("{"):content.rfind("}") + 1]
 				data = json.loads(json_str)
-				needs_plan = data.get("needs_plan", False)
+				needs_plan = bool(data.get("needs_plan", False))
 				steps = data.get("steps", [])
 				reasoning = data.get("reasoning", "")
-				if needs_plan and not steps and heuristic_steps:
-					steps = heuristic_steps
+				if needs_plan and not isinstance(steps, list):
+					steps = []
 				return needs_plan, steps, reasoning or "llm analysis"
 		except Exception:
 			pass
-
-		if heuristic_steps:
-			return True, heuristic_steps, "heuristic fallback"
 
 		return False, [], "planning analysis failed"
 
@@ -266,12 +282,14 @@ class Agent:
 
 	def chat(self, user_text: str, *, auto_approve_plan: bool = False) -> str:
 		self.history.append_event({"type": "user", "text": user_text})
+		original_request = user_text
 		
 		# Check if we need a plan
 		if self.config.enable_planning and not self.current_plan:
 			plan = self._generate_plan(user_text)
 			if plan:
 				self.current_plan = plan
+				self._plan_intermediate_outputs = []
 				# Return plan for approval (caller will handle display)
 				if not auto_approve_plan:
 					return "__PLAN_APPROVAL_NEEDED__"
@@ -301,6 +319,8 @@ class Agent:
 			if not tool_calls:
 				text = assistant_msg.get("content") or ""
 				self.history.append_event({"type": "assistant", "text": text})
+				if self.current_plan:
+					self._plan_intermediate_outputs.append({"step_idx": self.current_plan.current_step_idx, "text": text})
 				
 				# Mark current plan step as complete
 				if self.current_plan and not self.current_plan.is_complete():
@@ -314,9 +334,23 @@ class Agent:
 							self.messages.append({"role": "user", "content": f"Continue with next step: {next_step.description}"})
 							continue
 					else:
-						# Plan complete
+						# Plan complete: produce a final, LLM-driven summary response.
+						completed_plan = self.current_plan
+						intermediate = list(self._plan_intermediate_outputs)
 						self.current_plan = None
-				
+						self._plan_intermediate_outputs = []
+						try:
+							final = self._finalize_plan_response(
+								original_request=original_request,
+								plan=completed_plan,
+								intermediate_outputs=intermediate,
+							)
+							if final.strip():
+								self.history.append_event({"type": "assistant", "text": final, "finalized": True})
+								return final
+						except Exception:
+							pass
+
 				return text
 
 			# Execute tool calls and feed tool results back.

@@ -101,8 +101,8 @@ class TerminalManager:
 		)
 		assert self._proc.stdin is not None
 		assert self._proc.stdout is not None
-		self._stdin = self._proc.stdin
-		self._stdout = self._proc.stdout
+		self._stdin = self._proc.stdin  # type: ignore[assignment]
+		self._stdout = self._proc.stdout  # type: ignore[assignment]
 
 		# Set initial working directory.
 		self._write_line(f'cd "{self.workdir}"')

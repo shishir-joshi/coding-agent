@@ -13,7 +13,7 @@ The agent now has **automatic plan generation** for complex multi-step tasks. Wh
 
 ### Automatic Detection
 
-The agent uses heuristics and LLM analysis to determine if a request needs a plan:
+The agent uses an LLM to determine if a request needs a plan:
 
 **Needs a plan:**
 - Multiple files need changes
@@ -156,7 +156,7 @@ config = AgentConfig(
 
 ### Customization
 
-The planning prompt and heuristics can be customized in `agent/agent_loop.py`:
+The planning prompt can be customized in `agent/agent_loop.py`:
 
 - `PLANNING_PROMPT`: Template for plan generation
 - `_should_plan()`: Logic for determining if a plan is needed
@@ -183,7 +183,7 @@ The plan display is intentionally minimal:
 
 The agent tries to minimize false positives:
 - Won't generate plans for simple questions
-- Uses both heuristics and LLM judgment
+- Uses LLM judgment
 - Errs on the side of direct execution for ambiguous cases
 
 ## Future Enhancements

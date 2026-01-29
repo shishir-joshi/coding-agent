@@ -39,11 +39,11 @@ class TestRepl(unittest.TestCase):
 
 			buf = io.StringIO()
 			with redirect_stdout(buf):
-				repl._handle_command("/context", agent, history, cfg)
-				repl._handle_command("/tools", agent, history, cfg)
-				repl._handle_command("/tools json", agent, history, cfg)
-				repl._handle_command("/reset", agent, history, cfg)
-				repl._handle_command("/history 5", agent, history, cfg)
+				repl._handle_command("/context", agent, history, cfg)  # type: ignore[arg-type]
+				repl._handle_command("/tools", agent, history, cfg)  # type: ignore[arg-type]
+				repl._handle_command("/tools json", agent, history, cfg)  # type: ignore[arg-type]
+				repl._handle_command("/reset", agent, history, cfg)  # type: ignore[arg-type]
+				repl._handle_command("/history 5", agent, history, cfg)  # type: ignore[arg-type]
 
 			out = buf.getvalue()
 			self.assertIn("CTX", out)
@@ -78,7 +78,7 @@ class TestRepl(unittest.TestCase):
 
 			buf = io.StringIO()
 			with redirect_stdout(buf):
-				result = repl._handle_command("/doesnotexist", agent, history, cfg)
+				result = repl._handle_command("/doesnotexist", agent, history, cfg)  # type: ignore[arg-type]
 
 			self.assertFalse(result)
 			self.assertIn("unknown command", buf.getvalue())

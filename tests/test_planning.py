@@ -84,10 +84,14 @@ class TestPlanning(unittest.TestCase):
 		self.assertIsNone(agent.current_plan)
 		self.assertTrue(config.enable_planning)
 
-	# Ensures _generate_plan builds a Plan from deterministic heuristics without LLM calls.
+	# Ensures _generate_plan builds a Plan from LLM analysis.
 	def test_generate_plan_from_heuristic(self):
 		agent = Agent(history=self.history, config=AgentConfig(enable_planning=True))
-		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+		agent.client.chat = lambda *_, **__: {  # type: ignore[attr-defined]
+			"message": {
+				"content": '{"needs_plan": true, "reasoning": "repo restructure is multi-step", "steps": ["Inspect", "Design", "Implement"]}'
+			}
+		}
 
 		plan = agent._generate_plan("restructure the repo layout")
 		self.assertIsNotNone(plan)

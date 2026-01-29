@@ -98,23 +98,31 @@ class TestAgentLoop(unittest.TestCase):
 	# Checks heuristic keywords for repo reorg trigger a deterministic multi-step plan.
 	def test_should_plan_reorg_heuristic(self) -> None:
 		agent = Agent(history=HistoryStore(":memory:"), config=AgentConfig(enable_planning=True))
-		# If the LLM path ran, this would raise, so this ensures heuristics short-circuit.
-		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+		# Planning is LLM-driven; ensure we do call the LLM for analysis.
+		agent.client.chat = lambda *_, **__: {  # type: ignore[attr-defined]
+			"message": {
+				"content": '{"needs_plan": true, "reasoning": "multi-step refactor", "steps": ["Inspect repo", "Propose layout", "Apply changes"]}'
+			}
+		}
 
 		needs_plan, steps, reason = agent._should_plan("Please reorganize the repository layout")
 		self.assertTrue(needs_plan)
 		self.assertGreaterEqual(len(steps), 3)
-		self.assertIn("heuristic", reason)
+		self.assertIn("multi-step", reason)
 
 	# Checks planning keywords trigger deterministic steps even without LLM output.
 	def test_should_plan_plan_word_heuristic(self) -> None:
 		agent = Agent(history=HistoryStore(":memory:"), config=AgentConfig(enable_planning=True))
-		agent.client.chat = lambda *_, **__: (_ for _ in ()).throw(RuntimeError("should not call llm"))  # type: ignore[attr-defined]
+		agent.client.chat = lambda *_, **__: {  # type: ignore[attr-defined]
+			"message": {
+				"content": '{"needs_plan": true, "reasoning": "explicit request for roadmap", "steps": ["Clarify goals", "Draft plan", "Execute"]}'
+			}
+		}
 
 		needs_plan, steps, reason = agent._should_plan("Give me a roadmap with steps")
 		self.assertTrue(needs_plan)
 		self.assertGreaterEqual(len(steps), 3)
-		self.assertIn("heuristic", reason)
+		self.assertIn("roadmap", reason)
 
 	# Ensures short, simple questions are classified as no-plan paths.
 	def test_should_plan_simple_query_short_circuits(self) -> None:
