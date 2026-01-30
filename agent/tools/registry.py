@@ -1,3 +1,5 @@
+"""Tool registry and execution engine."""
+
 from __future__ import annotations
 
 import os
@@ -5,13 +7,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .patches import apply_v4a_patch
-from .diffs import unified_diff
-from .terminal import TerminalManager
+from ..patches import apply_v4a_patch
+from ..diffs import unified_diff
+from ..terminal import TerminalManager
 
 
 @dataclass
 class ToolRegistry:
+	"""Registry for available tools and their execution."""
 	terminal: TerminalManager | None = None
 
 	def _terminal(self) -> TerminalManager:

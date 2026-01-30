@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from .history import HistoryStore
 from .llm_openai_compat import OpenAICompatClient
 from .tools import ToolRegistry
-from .ui import get_theme, load_ui_config, render_markdown, supports_color, render_plan_banner
+from .ui_layer import get_theme, load_ui_config, render_markdown, supports_color, render_plan_banner
+from .planning import Plan, PlanStep, generate_plan
 
 
 DEFAULT_SYSTEM_PROMPT = """You are a small, careful coding assistant running in a local CLI with tool access.
@@ -55,59 +56,6 @@ Rules:
 - If something failed or was skipped, say so.
 - If no meaningful work was done, say that.
 """
-
-PLANNING_PROMPT = """Analyze this request and determine if it needs a multi-step plan:
-
-Request: {user_request}
-
-Respond with JSON only:
-{{
-  "needs_plan": true/false,
-  "reasoning": "why it does/doesn't need a plan",
-  "steps": ["step 1", "step 2", ...] (only if needs_plan is true)
-}}
-
-Needs a plan if:
-- Multiple files need changes
-- Requires exploration before acting
-- Has 3+ logical steps
-- Involves coordination across components
-
-Does NOT need a plan if:
-- Simple question/explanation
-- Single file edit
-- Quick lookup/search
-- 1-2 trivial steps
-"""
-
-
-@dataclass
-class PlanStep:
-	"""Represents a single step in an execution plan."""
-	description: str
-	completed: bool = False
-
-
-@dataclass
-class Plan:
-	"""Multi-step execution plan."""
-	steps: list[PlanStep] = field(default_factory=list)
-	current_step_idx: int = 0
-	approved: bool = False
-
-	def mark_current_complete(self) -> None:
-		"""Mark current step as completed and advance."""
-		if self.current_step_idx < len(self.steps):
-			self.steps[self.current_step_idx].completed = True
-			self.current_step_idx += 1
-
-	def is_complete(self) -> bool:
-		return self.current_step_idx >= len(self.steps)
-
-	def get_current_step(self) -> PlanStep | None:
-		if self.current_step_idx < len(self.steps):
-			return self.steps[self.current_step_idx]
-		return None
 
 
 @dataclass
@@ -235,50 +183,19 @@ class Agent:
 		"""Determine if request needs a plan.
 		
 		Returns: (needs_plan, steps, reasoning)
-		"""
-		if not self.config.enable_planning:
-			return False, [], "planning disabled"
-
-		# Quick heuristics for obviously simple queries
-		if len(user_text.split()) < 10 and any(q in user_text.lower() for q in ["what", "how", "why", "show", "list", "?"]):
-			return False, [], "simple query"
 		
-		# Ask LLM to analyze
-		try:
-			prompt = PLANNING_PROMPT.format(user_request=user_text)
-			resp = self.client.chat(
-				messages=[{"role": "user", "content": prompt}],
-				tools=None,
-			)
-			content = resp["message"].get("content", "")
-			
-			# Extract JSON
-			if "{" in content and "}" in content:
-				json_str = content[content.find("{"):content.rfind("}") + 1]
-				data = json.loads(json_str)
-				needs_plan = bool(data.get("needs_plan", False))
-				steps = data.get("steps", [])
-				reasoning = data.get("reasoning", "")
-				if needs_plan and not isinstance(steps, list):
-					steps = []
-				return needs_plan, steps, reasoning or "llm analysis"
-		except Exception:
-			pass
+		This delegates to the planning module's should_plan function.
+		"""
+		from .planning.detector import should_plan as planning_should_plan
+		return planning_should_plan(self.client, user_text, self.config.enable_planning)
 
-		return False, [], "planning analysis failed"
 
 	def _generate_plan(self, user_text: str) -> Plan | None:
-		"""Generate a plan for the user's request."""
-		needs_plan, steps, reasoning = self._should_plan(user_text)
+		"""Generate a plan for the user's request.
 		
-		if not needs_plan or not steps:
-			return None
-		
-		plan = Plan(
-			steps=[PlanStep(description=s) for s in steps],
-			approved=False,
-		)
-		return plan
+		This delegates to the planning module's generate_plan function.
+		"""
+		return generate_plan(self.client, user_text, self.config.enable_planning)
 
 	def chat(self, user_text: str, *, auto_approve_plan: bool = False) -> str:
 		self.history.append_event({"type": "user", "text": user_text})
@@ -301,7 +218,7 @@ class Agent:
 		for _round in range(self.config.max_tool_rounds):
 			if self.config.debug:
 				self._debug_print_round_header(_round)
-				self._debug_print_request_summary()
+				self._debug_print_request_summary(round_idx=_round)
 
 			resp = self.client.chat(
 				messages=self.messages,
@@ -407,7 +324,33 @@ class Agent:
 		head = f"===== round {round_idx + 1}/{self.config.max_tool_rounds} ====="
 		print("\n" + self._debug_prefix() + " " + self._debug_label(head, kind="accent"))
 
-	def _debug_print_request_summary(self) -> None:
+	def _debug_print_request_summary(self, *, round_idx: int) -> None:
+		# Default: print the full request/tools/messages summary only once (round 0).
+		# Subsequent rounds tend to be iterative tool calls, so re-printing the full
+		# message list is noisy. When executing a multi-step plan, we still print the
+		# newly-started step (see below).
+		if round_idx > 0 and self.current_plan is None:
+			return
+
+		# When executing an approved multi-step plan, each new round typically corresponds
+		# to an auto-continued step (we append a synthetic user message like
+		# "Continue with next step: ..."). In debug mode this used to spam the full
+		# message list every round, so for subsequent rounds we print only the step.
+		if round_idx > 0 and self.current_plan is not None:
+			last = self.messages[-1] if self.messages else {}
+			if last.get("role") == "user":
+				content = last.get("content")
+				if isinstance(content, str) and content.startswith("Continue with next step:"):
+					step_desc = content.split(":", 1)[1].strip() if ":" in content else content
+					print(
+						self._debug_prefix()
+						+ " "
+						+ self._debug_label("step", kind="accent")
+						+ ": "
+						+ self._truncate(step_desc, 200)
+					)
+					return
+
 		tool_names = []
 		for item in self.tools.tool_schemas():
 			fn = (item or {}).get("function") or {}

@@ -2,7 +2,7 @@
 """Demo script showing plan generation UI (without real LLM calls)."""
 
 from agent.agent_loop import Plan, PlanStep
-from agent.ui import get_theme, render_plan_banner, THEMES
+from agent.ui_layer import get_theme, render_plan_banner, THEMES
 
 # Demo plan
 plan = Plan(steps=[

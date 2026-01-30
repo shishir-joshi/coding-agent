@@ -9,7 +9,7 @@ import re
 
 from .agent_loop import Agent, AgentConfig, Plan
 from .history import HistoryStore
-from .ui import (
+from .ui_layer import (
 	clear_screen,
 	get_theme,
 	load_ui_config,

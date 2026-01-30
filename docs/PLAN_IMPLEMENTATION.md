@@ -113,30 +113,35 @@ AgentConfig(enable_planning=False)
 ## Files Changed
 
 1. **`agent/agent_loop.py`**
-   - Added `Plan`, `PlanStep` dataclasses
-   - Added `PLANNING_PROMPT` template
-   - Added `_should_plan()`, `_generate_plan()` methods
+   - Integrated plan generation + execution flow
    - Modified `Agent.__init__()` to accept `ui_callback`
    - Modified `chat()` for plan generation and tracking
    - Added auto-continue logic for multi-step execution
 
-2. **`agent/ui.py`**
+2. **`agent/planning/models.py`**
+   - `Plan`, `PlanStep` dataclasses
+   - `PLANNING_PROMPT` template
+
+3. **`agent/planning/detector.py`**
+   - Planning detection and plan generation helpers (`should_plan`, `generate_plan`)
+
+4. **`agent/ui_layer/theme.py`**
    - Added `render_plan_banner()` function
    - Minimal 3-state progress indicator (✓, →, ·)
 
-3. **`agent/repl.py`**
+5. **`agent/repl.py`**
    - Added plan approval flow
    - Added banner update callback
    - Integrated plan display in main loop
 
-4. **`agent/__main__.py`**
+6. **`agent/__main__.py`**
    - Added `--no-plan` CLI flag
 
-5. **`tests/test_planning.py`** (new)
+7. **`tests/test_planning.py`** (new)
    - 6 tests for Plan/PlanStep behavior
    - Tests for agent configuration
 
-6. **`tests/test_agent_loop.py`**
+8. **`tests/test_agent_loop.py`**
    - Fixed test to disable planning (avoid interference)
 
 7. **`docs/PLAN_GENERATION.md`** (new)

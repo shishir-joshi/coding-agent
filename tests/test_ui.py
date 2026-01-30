@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest import mock
 
-from agent.ui import get_theme, render_markdown
+from agent.ui_layer import get_theme, render_markdown
 
 
 class TestUiMarkdown(unittest.TestCase):
